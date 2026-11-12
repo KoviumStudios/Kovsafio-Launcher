@@ -36,7 +36,7 @@ jobs:
         run: |
           node <<'NODE'
           const fs=require('fs');
-          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:'macos-15',target:'darwin-arm64',arch:'arm64',os:'macos'}];
+          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:'macos-26',target:'darwin-arm64',arch:'arm64',os:'macos'}];
           const selected=process.env.KOVIUM_TARGET_SELECTION||'all';
           if(selected!=='all'&&!targets.some(t=>t.target===selected))throw Error('Invalid native target');
           fs.appendFileSync(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify({include:targets.filter(t=>selected==='all'||t.target===selected)})+'\n');
