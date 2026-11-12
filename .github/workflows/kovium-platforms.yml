@@ -26,6 +26,13 @@ on:
           - macos-26
           - macos-15
           - xcode-27
+      windows_runner:
+        description: Standard free Windows runner used for native verification
+        type: choice
+        default: windows-2025
+        options:
+          - windows-2025
+          - windows-2022
 
 permissions:
   contents: write
@@ -42,10 +49,12 @@ jobs:
         env:
           KOVIUM_TARGET_SELECTION: ${{ inputs.target }}
           KOVIUM_ARM_RUNNER: ${{ inputs.arm_runner }}
+          KOVIUM_WINDOWS_RUNNER: ${{ inputs.windows_runner }}
         shell: bash
         run: |
           node <<'NODE'
           const fs=require('fs');
+          const windowsRunner=process.env.KOVIUM_WINDOWS_RUNNER||'windows-2025';if(!['windows-2025','windows-2022'].includes(windowsRunner))throw Error('Invalid standard Windows runner');
           const armRunner=process.env.KOVIUM_ARM_RUNNER||'macos-26';if(!['macos-26','macos-15','xcode-27'].includes(armRunner))throw Error('Invalid standard Apple runner');
           const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:armRunner,target:'darwin-arm64',arch:'arm64',os:'macos'}];
           const selected=process.env.KOVIUM_TARGET_SELECTION||'all';
@@ -186,7 +195,7 @@ jobs:
     name: Verify Windows desktop and signed update
     needs: select
     if: inputs.target == 'all' || inputs.target == 'win32-x64'
-    runs-on: windows-2025
+    runs-on: ${{ inputs.windows_runner || 'windows-2025' }}
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
