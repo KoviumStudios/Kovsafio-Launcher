@@ -1,0 +1,143 @@
+name: Build and verify Kovium native launchers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Draft release containing app.asar and release-info.json
+        required: true
+        default: v2-1.7.0
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+            arch: x64
+            os: linux
+          - runner: macos-15-intel
+            target: darwin-x64
+            arch: x64
+            os: macos
+          - runner: macos-15
+            target: darwin-arm64
+            arch: arm64
+            os: macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KOVIUM_RELEASE_TAG: ${{ inputs.release_tag }}
+      KOVIUM_TARGET: ${{ matrix.target }}
+      KOVIUM_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Download staged public application
+        shell: bash
+        run: |
+          node -e 'if(!/^v2-\d+\.\d+\.\d+$/.test(process.env.KOVIUM_RELEASE_TAG))throw Error("Invalid release tag")'
+          mkdir -p stage dist native-results
+          gh release download "$KOVIUM_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern app.asar --pattern release-info.json --pattern launcher-v2.json --dir stage
+          node <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const m=JSON.parse(fs.readFileSync('stage/release-info.json'));
+          if(!/^\d+\.\d+\.\d+$/.test(m.version)||m.runtimeMajor!==45||m.size!==fs.statSync('stage/app.asar').size||m.sha256!==crypto.createHash('sha256').update(fs.readFileSync('stage/app.asar')).digest('hex'))throw Error('Staged application integrity mismatch');
+          fs.appendFileSync(process.env.GITHUB_ENV,'KOVIUM_APP_VERSION='+m.version+'\n');
+          require('./platform/native-platform-smoke-v170.cjs').extractFlat('stage/app.asar','platform/player-v170');
+          NODE
+      - name: Verify Java extraction and signed update safety
+        shell: bash
+        run: node --test platform/test-portable-v170.cjs
+      - name: Download official matching Electron runtime
+        shell: bash
+        run: node platform/download-portable-runtimes-v170.cjs --target "$KOVIUM_TARGET"
+      - name: Build platform archive
+        shell: bash
+        run: python3 platform/build-portable-v170.py --asar stage/app.asar --out dist --source platform/player-v170 --only "$KOVIUM_TARGET"
+      - name: Install Linux package and sandbox dependencies
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ./dist/*.deb xvfb
+          test "$(stat -c '%U:%G:%a' /opt/kovium-launcher/chrome-sandbox)" = 'root:root:4755'
+      - name: Verify native Linux Java, Forge, ARM JNI and launcher UI
+        if: matrix.os == 'linux'
+        shell: bash
+        run: xvfb-run -a node platform/native-platform-smoke-v170.cjs --asar stage/app.asar --exe /opt/kovium-launcher/kovium-launcher --out "native-results/$KOVIUM_TARGET.json"
+      - name: Verify native Linux signed overlay update with external supervisor
+        if: matrix.os == 'linux'
+        shell: bash
+        run: xvfb-run -a node platform/native-overlay-smoke-v170.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --bundle /opt/kovium-launcher --out "native-results/overlay-$KOVIUM_TARGET.json"
+      - name: Sign and verify macOS bundle without mutating future updates
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          mkdir -p unpacked
+          ditto -x -k "dist/KOVIUM-Launcher-$KOVIUM_APP_VERSION-macos-$KOVIUM_ARCH-unsigned.zip" unpacked
+          codesign --force --deep --sign - --preserve-metadata=entitlements,flags,runtime 'unpacked/KOVIUM Launcher.app'
+          codesign --verify --deep --strict --verbose=2 'unpacked/KOVIUM Launcher.app'
+          codesign -d --verbose=4 'unpacked/KOVIUM Launcher.app' 2> native-results/bundle-signature.txt
+      - name: Verify native macOS Java, Forge, ARM JNI and launcher UI
+        if: matrix.os == 'macos'
+        shell: bash
+        run: node platform/native-platform-smoke-v170.cjs --asar stage/app.asar --exe "$GITHUB_WORKSPACE/unpacked/KOVIUM Launcher.app/Contents/MacOS/Electron" --out "native-results/$KOVIUM_TARGET.json"
+      - name: Verify native macOS signed overlay update and unchanged bundle signature
+        if: matrix.os == 'macos'
+        shell: bash
+        run: node platform/native-overlay-smoke-v170.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --bundle "$GITHUB_WORKSPACE/unpacked/KOVIUM Launcher.app" --out "native-results/overlay-$KOVIUM_TARGET.json"
+      - name: Create final verified macOS ZIP
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          codesign --verify --deep --strict 'unpacked/KOVIUM Launcher.app'
+          ditto -c -k --keepParent 'unpacked/KOVIUM Launcher.app' "dist/KOVIUM-Launcher-$KOVIUM_APP_VERSION-macos-$KOVIUM_ARCH.zip"
+          rm "dist/KOVIUM-Launcher-$KOVIUM_APP_VERSION-macos-$KOVIUM_ARCH-unsigned.zip"
+      - name: Record final package hashes
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),path=require('path'),crypto=require('crypto');
+          const files=fs.readdirSync('dist').filter(n=>/\.(?:deb|tar\.gz|zip)$/.test(n));
+          const native=JSON.parse(fs.readFileSync('native-results/'+process.env.KOVIUM_TARGET+'.json'));
+          const overlay=JSON.parse(fs.readFileSync('native-results/overlay-'+process.env.KOVIUM_TARGET+'.json'));
+          if(!native.ok||!overlay.ok||!overlay.bundleUnchanged||!overlay.externalSupervisorVerified)throw Error('Missing native verification evidence');
+          const result={platform:process.platform,arch:process.arch,version:process.env.KOVIUM_APP_VERSION,appSha256:JSON.parse(fs.readFileSync('stage/release-info.json')).sha256,electronVersion:'45.2.2',nativeVerified:true,nativeOverlayVerified:true,macSigning:process.platform==='darwin'?'ad-hoc (not notarized)':undefined,files:files.map(name=>({name,size:fs.statSync(path.join('dist',name)).size,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join('dist',name))).digest('hex')}))};
+          fs.writeFileSync('dist/native-package-verification-'+process.env.KOVIUM_TARGET+'.json',JSON.stringify(result,null,2));
+          NODE
+      - name: Upload only verified native packages to the inactive draft release
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),path=require('path'),{execFileSync}=require('child_process');
+          const tag=process.env.KOVIUM_RELEASE_TAG,repo=process.env.GITHUB_REPOSITORY;
+          const state=JSON.parse(execFileSync('gh',['release','view',tag,'--repo',repo,'--json','isDraft'],{encoding:'utf8'}));
+          if(!state.isDraft)throw Error('Native packages may only be uploaded to an inactive draft release');
+          const receipt='native-package-verification-'+process.env.KOVIUM_TARGET+'.json',proof=JSON.parse(fs.readFileSync(path.join('dist',receipt)));
+          const allowed=/^KOVIUM-Launcher-\d+\.\d+\.\d+-(?:linux-(?:x64|arm64)\.(?:deb|tar\.gz)|macos-(?:x64|arm64)\.zip)$/;
+          for(const item of proof.files){if(!allowed.test(item.name))throw Error('Unexpected package asset name');execFileSync('gh',['release','upload',tag,path.join('dist',item.name),'--repo',repo,'--clobber'],{stdio:'inherit',timeout:180000});}
+          execFileSync('gh',['release','upload',tag,path.join('dist',receipt),'--repo',repo,'--clobber'],{stdio:'inherit',timeout:30000});
+          NODE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: kovium-${{ matrix.target }}
+          path: |
+            dist/*.json
+            native-results/*.json
+            native-results/*.log
+            native-results/*.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
