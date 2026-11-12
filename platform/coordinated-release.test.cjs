@@ -1,0 +1,6 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict'),{coordinatedRelease,TARGETS}=require('./coordinated-release.cjs');
+const metadata={version:'1.8.1',sha256:'a'.repeat(64)};
+const fixture=()=>TARGETS.map(target=>({target,version:metadata.version,appSha256:metadata.sha256,nativeVerified:true,updateVerified:true,...(target==='win32-x64'?{previousVersion:'1.7.0',installedVersion:'1.8.1',healthy:true,signatureVerified:true}:{})}));
+test('a public release requires all four matching native targets, including real Windows update',()=>{assert(coordinatedRelease(metadata,fixture()).allPlatformsReady);assert.throws(()=>coordinatedRelease(metadata,fixture().slice(1)),/Windows/);for(const field of ['version','appSha256','nativeVerified','updateVerified','healthy','installedVersion','signatureVerified']){const p=fixture();p[0][field]=false;assert.throws(()=>coordinatedRelease(metadata,p));}});
+test('a failed or mixed Mac/Linux build cannot activate a common release',()=>{for(let i=1;i<4;i++){const p=fixture();p[i].appSha256='b'.repeat(64);assert.throws(()=>coordinatedRelease(metadata,p));}const p=fixture();p[3]=p[2];assert.throws(()=>coordinatedRelease(metadata,p));});
