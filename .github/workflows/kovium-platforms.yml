@@ -17,6 +17,15 @@ on:
           - linux-x64
           - darwin-x64
           - darwin-arm64
+          - win32-x64
+      arm_runner:
+        description: Standard free Apple Silicon runner used for native verification
+        type: choice
+        default: macos-26
+        options:
+          - macos-26
+          - macos-15
+          - xcode-27
 
 permissions:
   contents: write
@@ -32,17 +41,20 @@ jobs:
       - id: targets
         env:
           KOVIUM_TARGET_SELECTION: ${{ inputs.target }}
+          KOVIUM_ARM_RUNNER: ${{ inputs.arm_runner }}
         shell: bash
         run: |
           node <<'NODE'
           const fs=require('fs');
-          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:'macos-26',target:'darwin-arm64',arch:'arm64',os:'macos'}];
+          const armRunner=process.env.KOVIUM_ARM_RUNNER||'macos-26';if(!['macos-26','macos-15','xcode-27'].includes(armRunner))throw Error('Invalid standard Apple runner');
+          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:armRunner,target:'darwin-arm64',arch:'arm64',os:'macos'}];
           const selected=process.env.KOVIUM_TARGET_SELECTION||'all';
-          if(selected!=='all'&&!targets.some(t=>t.target===selected))throw Error('Invalid native target');
+          if(selected!=='all'&&selected!=='win32-x64'&&!targets.some(t=>t.target===selected))throw Error('Invalid native target');
           fs.appendFileSync(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify({include:targets.filter(t=>selected==='all'||t.target===selected)})+'\n');
           NODE
   native:
     needs: select
+    if: inputs.target != 'win32-x64'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -112,7 +124,9 @@ jobs:
       - name: Verify the released macOS launcher accepts the staged signed update
         if: matrix.target == 'darwin-x64'
         shell: bash
-        run: node platform/native-legacy-overlay-smoke-v190.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --out native-results/legacy-real/verification.json
+        run: |
+          node platform/native-legacy-overlay-smoke-v190.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --out native-results/legacy-real/verification.json
+          cp native-results/legacy-real/verification.json dist/legacy-update-verification-darwin-x64.json
       - name: Verify native macOS Java, Forge, ARM JNI and launcher UI
         if: matrix.os == 'macos'
         shell: bash
@@ -152,6 +166,7 @@ jobs:
           const allowed=/^KOVIUM-Launcher-\d+\.\d+\.\d+-(?:linux-(?:x64|arm64)\.(?:deb|tar\.gz)|macos-(?:x64|arm64)\.zip)$/;
           for(const item of proof.files){if(!allowed.test(item.name))throw Error('Unexpected package asset name');execFileSync('gh',['release','upload',tag,path.join('dist',item.name),'--repo',repo,'--clobber'],{stdio:'inherit',timeout:180000});}
           execFileSync('gh',['release','upload',tag,path.join('dist',receipt),'--repo',repo,'--clobber'],{stdio:'inherit',timeout:30000});
+          if(process.env.KOVIUM_TARGET==='darwin-x64')execFileSync('gh',['release','upload',tag,'dist/legacy-update-verification-darwin-x64.json','--repo',repo,'--clobber'],{stdio:'inherit',timeout:30000});
           NODE
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
@@ -159,10 +174,72 @@ jobs:
           name: kovium-${{ matrix.target }}
           path: |
             dist/*.json
-            native-results/*.json
-            native-results/*.log
-            native-results/*.txt
-            native-results/*.png
+            native-results/**/*.json
+            native-results/**/*.log
+            native-results/**/*.txt
+            native-results/**/*.png
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  windows:
+    name: Verify Windows desktop and signed update
+    needs: select
+    if: inputs.target == 'all' || inputs.target == 'win32-x64'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KOVIUM_RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Download the staged signed application and immutable legacy payload
+        shell: pwsh
+        run: |
+          if ($env:KOVIUM_RELEASE_TAG -notmatch '^v2-\d+\.\d+\.\d+$') { throw 'Invalid staged release tag' }
+          New-Item -ItemType Directory -Path stage,legacy,runtime -Force | Out-Null
+          gh release download "$env:KOVIUM_RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --pattern app.asar --pattern release-info.json --pattern launcher-v2.json --dir stage
+          if ($LASTEXITCODE -ne 0) { throw 'Staged application download failed' }
+          gh release download v2-1.8.0 --repo "$env:GITHUB_REPOSITORY" --pattern app.asar --dir legacy
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy payload download failed' }
+          Move-Item -LiteralPath legacy/app.asar -Destination stage/legacy-app.asar
+          node -e "const fs=require('fs'),c=require('crypto'),m=JSON.parse(fs.readFileSync('stage/release-info.json'));for(const [f,h]of [['stage/app.asar',m.sha256],['stage/legacy-app.asar','4be25e34085f4e870debb0b64a0ee5ff75bd3bc0d2d5c6268f0e4fc0b725a3c6']])if(c.createHash('sha256').update(fs.readFileSync(f)).digest('hex')!==h)throw Error('Payload integrity mismatch');if(m.runtimeMajor!==45)throw Error('Unexpected runtime')"
+          if ($LASTEXITCODE -ne 0) { throw 'Application integrity check failed' }
+      - name: Download and verify the matching official Electron runtime
+        shell: pwsh
+        run: |
+          $electronArchive = 'electron-v45.2.2-win32-x64.zip'
+          Invoke-WebRequest -Uri "https://github.com/electron/electron/releases/download/v45.2.2/$electronArchive" -OutFile electron.zip -ProgressAction SilentlyContinue
+          Invoke-WebRequest -Uri https://github.com/electron/electron/releases/download/v45.2.2/SHASUMS256.txt -OutFile electron-shasums.txt -ProgressAction SilentlyContinue
+          $checksumLine = Get-Content -LiteralPath electron-shasums.txt | Where-Object { $_ -match '\s+\*?electron-v45\.2\.2-win32-x64\.zip$' }
+          if (@($checksumLine).Count -ne 1) { throw 'Missing official runtime checksum' }
+          $expectedChecksum = ($checksumLine -split '\s+')[0]
+          $actualChecksum = (Get-FileHash -LiteralPath electron.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualChecksum -ne $expectedChecksum.ToLowerInvariant()) { throw 'Runtime checksum mismatch' }
+          Expand-Archive -LiteralPath electron.zip -DestinationPath runtime
+          Rename-Item -LiteralPath runtime/electron.exe -NewName 'KOVIUM Launcher.exe'
+      - name: Verify real Windows account, Arcade and update behavior
+        shell: pwsh
+        run: |
+          node platform/native-windows-smoke-v190.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --runtime runtime --legacy-asar stage/legacy-app.asar --season platform/fixtures/runner-season-v190.json --out native-results/win32-x64
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows verification failed' }
+      - name: Upload the Windows verification to the inactive draft
+        shell: pwsh
+        run: |
+          $releaseState = gh release view "$env:KOVIUM_RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --json isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $releaseState.isDraft) { throw 'The release must remain an inactive draft' }
+          gh release upload "$env:KOVIUM_RELEASE_TAG" native-results/win32-x64/windows-update-proof.json --repo "$env:GITHUB_REPOSITORY" --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Windows verification upload failed' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: kovium-win32-x64
+          path: native-results/win32-x64/**
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 1
