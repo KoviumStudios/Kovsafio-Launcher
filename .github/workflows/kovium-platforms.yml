@@ -130,16 +130,28 @@ jobs:
           codesign --force --deep --sign - --preserve-metadata=entitlements,flags,runtime 'unpacked/KOVIUM Launcher.app'
           codesign --verify --deep --strict --verbose=2 'unpacked/KOVIUM Launcher.app'
           codesign -d --verbose=4 'unpacked/KOVIUM Launcher.app' 2> native-results/bundle-signature.txt
+      - name: Isolate the legacy test keychain
+        if: matrix.target == 'darwin-x64'
+        shell: bash
+        run: node platform/ci-macos-keychain-v190.cjs begin --phase legacy
       - name: Verify the released macOS launcher accepts the staged signed update
         if: matrix.target == 'darwin-x64'
         shell: bash
         run: |
           node platform/native-legacy-overlay-smoke-v190.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --out native-results/legacy-real/verification.json
           cp native-results/legacy-real/verification.json dist/legacy-update-verification-darwin-x64.json
+      - name: Isolate the core test keychain
+        if: matrix.os == 'macos'
+        shell: bash
+        run: node platform/ci-macos-keychain-v190.cjs begin --phase core
       - name: Verify native macOS Java, Forge, ARM JNI and launcher UI
         if: matrix.os == 'macos'
         shell: bash
         run: node platform/native-platform-smoke-v170.cjs --asar stage/app.asar --exe "$GITHUB_WORKSPACE/unpacked/KOVIUM Launcher.app/Contents/MacOS/Electron" --out "native-results/$KOVIUM_TARGET.json"
+      - name: Isolate the overlay test keychain
+        if: matrix.os == 'macos'
+        shell: bash
+        run: node platform/ci-macos-keychain-v190.cjs begin --phase overlay
       - name: Verify native macOS signed overlay update and unchanged bundle signature
         if: matrix.os == 'macos'
         shell: bash
@@ -190,6 +202,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+
+      - name: Restore the original CI keychain state
+        if: always() && matrix.os == 'macos'
+        shell: bash
+        run: |
+          if [ -f platform/ci-macos-keychain-v190.cjs ]; then
+            node platform/ci-macos-keychain-v190.cjs end
+          fi
 
   windows:
     name: Verify Windows desktop and signed update
