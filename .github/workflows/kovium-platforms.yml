@@ -26,6 +26,13 @@ on:
           - macos-26
           - macos-15
           - xcode-27
+      intel_runner:
+        description: Standard free Intel Mac runner used for native verification
+        type: choice
+        default: macos-15-intel
+        options:
+          - macos-15-intel
+          - macos-26-intel
       windows_runner:
         description: Standard free Windows runner used for native verification
         type: choice
@@ -50,13 +57,15 @@ jobs:
           KOVIUM_TARGET_SELECTION: ${{ inputs.target }}
           KOVIUM_ARM_RUNNER: ${{ inputs.arm_runner }}
           KOVIUM_WINDOWS_RUNNER: ${{ inputs.windows_runner }}
+          KOVIUM_INTEL_RUNNER: ${{ inputs.intel_runner }}
         shell: bash
         run: |
           node <<'NODE'
           const fs=require('fs');
+          const intelRunner=process.env.KOVIUM_INTEL_RUNNER||'macos-15-intel';if(!['macos-15-intel','macos-26-intel'].includes(intelRunner))throw Error('Invalid standard Intel Mac runner');
           const windowsRunner=process.env.KOVIUM_WINDOWS_RUNNER||'windows-2025';if(!['windows-2025','windows-2022'].includes(windowsRunner))throw Error('Invalid standard Windows runner');
           const armRunner=process.env.KOVIUM_ARM_RUNNER||'macos-26';if(!['macos-26','macos-15','xcode-27'].includes(armRunner))throw Error('Invalid standard Apple runner');
-          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:armRunner,target:'darwin-arm64',arch:'arm64',os:'macos'}];
+          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:intelRunner,target:'darwin-x64',arch:'x64',os:'macos'},{runner:armRunner,target:'darwin-arm64',arch:'arm64',os:'macos'}];
           const selected=process.env.KOVIUM_TARGET_SELECTION||'all';
           if(selected!=='all'&&selected!=='win32-x64'&&!targets.some(t=>t.target===selected))throw Error('Invalid native target');
           fs.appendFileSync(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify({include:targets.filter(t=>selected==='all'||t.target===selected)})+'\n');
