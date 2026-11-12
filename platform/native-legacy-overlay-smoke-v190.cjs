@@ -2,7 +2,7 @@
 // CI-only compatibility test. The released signed .app is never modified.
 // Its exact legacy JS updater is dependency-injected outside the bundle, then
 // its real executable/entry point activates and restarts the new signed overlay.
-const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{spawn,execFileSync}=require('node:child_process');
+const fs=(()=>{try{return require('original-fs');}catch{return require('node:fs');}})(),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{spawn,execFileSync}=require('node:child_process');
 const REPO='KoviumStudios/Kovsafio-Launcher',LEGACY='1.8.0',LEGACY_ASAR='4be25e34085f4e870debb0b64a0ee5ff75bd3bc0d2d5c6268f0e4fc0b725a3c6';
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),fileHash=f=>sha(fs.readFileSync(f)),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function readAsar(file,names){const fd=fs.openSync(file,'r');try{const p=Buffer.alloc(16);if(fs.readSync(fd,p,0,16,0)!==16)throw Error('Incomplete ASAR');const size=p.readUInt32LE(12);if(size<2||size>10000000)throw Error('Invalid ASAR header');const h=Buffer.alloc(size);if(fs.readSync(fd,h,0,size,16)!==size)throw Error('Incomplete ASAR header');const tree=JSON.parse(h).files,base=8+p.readUInt32LE(4),out={};for(const name of names){const e=tree[name];if(!e||e.files||e.link||e.unpacked||!/^[0-9]+$/.test(e.offset)||!Number.isSafeInteger(e.size)||e.size<1||base+Number(e.offset)+e.size>fs.fstatSync(fd).size)throw Error('Invalid entry '+name);const b=Buffer.alloc(e.size);if(fs.readSync(fd,b,0,b.length,base+Number(e.offset))!==b.length)throw Error('Incomplete entry');out[name]=b;}return out;}finally{fs.closeSync(fd);}}
