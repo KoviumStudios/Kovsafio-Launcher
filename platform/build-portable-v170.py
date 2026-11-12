@@ -13,7 +13,21 @@ def sha(file):
         for chunk in iter(lambda:f.read(4*1024*1024),b''): h.update(chunk)
     return h.hexdigest()
 def mode(info): return (info.external_attr>>16) or (stat.S_IFDIR|0o755 if info.is_dir() else stat.S_IFREG|0o644)
+def tar_add_directory(t,name):
+    """dpkg requires each parent directory to precede the files it contains."""
+    emitted=getattr(t,'_kovium_directories',None)
+    if emitted is None:emitted=set();t._kovium_directories=emitted
+    parts=pathlib.PurePosixPath(name.rstrip('/')).parts
+    if not parts or any(p in ('','.', '..','/') for p in parts):raise ValueError('Invalid archive directory')
+    for end in range(1,len(parts)+1):
+        folder='/'.join(parts[:end])
+        if folder in emitted:continue
+        info=tarfile.TarInfo(folder);info.type=tarfile.DIRTYPE;info.mode=0o755;info.uid=info.gid=0;info.uname=info.gname='';info.mtime=EPOCH;t.addfile(info);emitted.add(folder)
+def tar_add_parents(t,name):
+    parent=pathlib.PurePosixPath(name).parent
+    if str(parent)!='.':tar_add_directory(t,str(parent))
 def tar_add_bytes(t,name,data,permissions=0o644):
+    tar_add_parents(t,name)
     info=tarfile.TarInfo(name);info.size=len(data);info.mode=permissions;info.mtime=EPOCH;t.addfile(info,io.BytesIO(data))
 def zip_info(name,permissions):
     z=zipfile.ZipInfo(name,date_time=(2023,11,14,22,13,20));z.create_system=3;z.external_attr=permissions<<16;z.compress_type=zipfile.ZIP_DEFLATED;return z
@@ -37,11 +51,15 @@ def unix_members(z,prefix):
 def linux_tar(z,target,asar,logo,version,deb=False):
     prefix='opt/kovium-launcher' if deb else 'KOVIUM Launcher'
     with tarfile.open(target,'w:gz',format=tarfile.PAX_FORMAT,compresslevel=6) as t:
+        tar_add_directory(t,prefix)
         for info,member in unix_members(z,prefix):
+            if member.isdir():tar_add_directory(t,member.name);continue
+            tar_add_parents(t,member.name)
             if member.isreg():
                 with z.open(info) as stream:t.addfile(member,stream)
             else:t.addfile(member)
         with open(asar,'rb') as stream:
+            tar_add_parents(t,prefix+'/resources/app.asar')
             m=tarfile.TarInfo(prefix+'/resources/app.asar');m.size=os.path.getsize(asar);m.mode=0o644;m.mtime=EPOCH;t.addfile(m,stream)
         tar_add_bytes(t,prefix+'/kovium.png',logo)
         if deb:

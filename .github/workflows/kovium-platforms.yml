@@ -4,31 +4,48 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Draft release containing app.asar and release-info.json
+        description: Draft release containing app.asar, release-info.json and launcher-v2.json
         required: true
         default: v2-1.7.0
+      target:
+        description: Native target to build and verify
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - linux-x64
+          - darwin-x64
+          - darwin-arm64
 
 permissions:
   contents: write
 
 jobs:
+  select:
+    name: Select native targets
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - id: targets
+        env:
+          KOVIUM_TARGET_SELECTION: ${{ inputs.target }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const targets=[{runner:'ubuntu-24.04',target:'linux-x64',arch:'x64',os:'linux'},{runner:'macos-15-intel',target:'darwin-x64',arch:'x64',os:'macos'},{runner:'macos-15',target:'darwin-arm64',arch:'arm64',os:'macos'}];
+          const selected=process.env.KOVIUM_TARGET_SELECTION||'all';
+          if(selected!=='all'&&!targets.some(t=>t.target===selected))throw Error('Invalid native target');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify({include:targets.filter(t=>selected==='all'||t.target===selected)})+'\n');
+          NODE
   native:
+    needs: select
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: linux-x64
-            arch: x64
-            os: linux
-          - runner: macos-15-intel
-            target: darwin-x64
-            arch: x64
-            os: macos
-          - runner: macos-15
-            target: darwin-arm64
-            arch: arm64
-            os: macos
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -59,6 +76,9 @@ jobs:
       - name: Verify Java extraction and signed update safety
         shell: bash
         run: node --test platform/test-portable-v170.cjs
+      - name: Verify Debian and portable archive directory order
+        shell: bash
+        run: python3 platform/test-portable-tar-parents-v170.py
       - name: Download official matching Electron runtime
         shell: bash
         run: node platform/download-portable-runtimes-v170.cjs --target "$KOVIUM_TARGET"
