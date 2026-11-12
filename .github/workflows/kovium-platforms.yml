@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Draft release containing app.asar, release-info.json and launcher-v2.json
         required: true
-        default: v2-1.8.0
+        default: v2-1.9.0
       target:
         description: Native target to build and verify
         required: true
@@ -109,6 +109,10 @@ jobs:
           codesign --force --deep --sign - --preserve-metadata=entitlements,flags,runtime 'unpacked/KOVIUM Launcher.app'
           codesign --verify --deep --strict --verbose=2 'unpacked/KOVIUM Launcher.app'
           codesign -d --verbose=4 'unpacked/KOVIUM Launcher.app' 2> native-results/bundle-signature.txt
+      - name: Verify the released macOS launcher accepts the staged signed update
+        if: matrix.target == 'darwin-x64'
+        shell: bash
+        run: node platform/native-legacy-overlay-smoke-v190.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --out native-results/legacy-real/verification.json
       - name: Verify native macOS Java, Forge, ARM JNI and launcher UI
         if: matrix.os == 'macos'
         shell: bash
