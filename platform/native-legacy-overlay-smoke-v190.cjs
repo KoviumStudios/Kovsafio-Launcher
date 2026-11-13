@@ -37,6 +37,21 @@ function readAsar(file, names) {
   } finally { fs.closeSync(fd); }
 }
 
+async function publicFetch(url, options) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (attempt === 3 || ![429,500,502,503,504].includes(response.status)) return response;
+      await response.body?.cancel();
+      console.log(JSON.stringify({phase:'legacy-download-retry',host:new URL(url).hostname,attempt,status:response.status}));
+    } catch (error) {
+      console.log(JSON.stringify({phase:'legacy-download-retry',host:new URL(url).hostname,attempt,error:error.message,cause:error.cause?.code||error.cause?.message||''}));
+      if (attempt === 3) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+  }
+}
+
 async function publicJSON(url, max = 2000000) {
   const u = new URL(url);
   assert(u.protocol === 'https:' && ['api.github.com', 'github.com'].includes(u.hostname));
@@ -44,7 +59,7 @@ async function publicJSON(url, max = 2000000) {
   // Shared hosted-runner IPs exhaust the anonymous API quota. Authenticate only
   // this CI metadata lookup; the released app and all download URLs stay public.
   if (process.env.GITHUB_ACTIONS === 'true' && process.env.GH_TOKEN && u.hostname === 'api.github.com' && u.pathname === '/repos/' + REPO + '/releases/tags/v2-1.8.0') headers.Authorization = 'Bearer ' + process.env.GH_TOKEN;
-  const response = await fetch(u, {headers,redirect:'error',signal:AbortSignal.timeout(30000)});
+  const response = await publicFetch(u, {headers,redirect:'error',signal:AbortSignal.timeout(30000)});
   assert(response.ok, 'Public metadata HTTP ' + response.status);
   const bytes = Buffer.from(await response.arrayBuffer());
   assert(bytes.length <= max);
@@ -55,7 +70,7 @@ async function downloadLegacyAsset(asset, file) {
   assert(asset && /^sha256:[a-f0-9]{64}$/.test(asset.digest || '') && Number.isSafeInteger(asset.size) && asset.size > 0 && asset.size < 600000000);
   const url = new URL(asset.browser_download_url);
   assert(url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith('/' + REPO + '/releases/download/v2-1.8.0/'));
-  const response = await fetch(url, {signal:AbortSignal.timeout(600000)});
+  const response = await publicFetch(url, {signal:AbortSignal.timeout(600000)});
   assert(response.ok && response.body && new URL(response.url).protocol === 'https:');
   const fd = fs.openSync(file, 'wx'), digest = crypto.createHash('sha256');
   let bytes = 0;
