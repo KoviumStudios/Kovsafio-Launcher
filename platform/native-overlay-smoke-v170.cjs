@@ -129,6 +129,25 @@ async function main() {
   if (!opts.asar || !opts.metadata || !opts.bundle || !opts.out) throw Error('--asar --metadata --bundle --out required');
   const root = path.resolve(path.dirname(opts.out));
   fs.mkdirSync(root, { recursive: true });
+  // The historical workflow runs its legacy step on Intel only. Exercise the
+  // same real released bundle + public rescue command on Apple Silicon too.
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
+    const standard = path.join(os.homedir(), 'Library/Application Support/kovium-launcher');
+    const saved = standard + '.ci-core-' + crypto.randomBytes(6).toString('hex');
+    const hadCoreProfile = fs.existsSync(standard);
+    if (hadCoreProfile) {
+      if (!fs.lstatSync(standard).isDirectory() || fs.lstatSync(standard).isSymbolicLink()) throw Error('Unexpected CI core profile');
+      fs.renameSync(standard, saved);
+    }
+    const isolate = phase => execFileSync(process.execPath, [path.join(__dirname, 'ci-macos-keychain-v190.cjs'), 'begin', '--phase', phase], {stdio:'inherit', timeout:30000});
+    try {
+      isolate('legacy');
+      execFileSync(process.execPath, [path.join(__dirname, 'native-legacy-overlay-smoke-v190.cjs'), '--asar', path.resolve(opts.asar), '--metadata', path.resolve(opts.metadata), '--out', path.join(root, 'legacy-real/verification.json')], {stdio:'inherit', timeout:540000});
+    } finally {
+      if (hadCoreProfile && fs.existsSync(saved) && !fs.existsSync(standard)) fs.renameSync(saved, standard);
+      isolate('overlay');
+    }
+  }
   let linuxLegacy;
   if (process.platform === 'linux') {
     linuxLegacy = await require('./native-linux-legacy-v192.cjs').main({ out: path.join(root, 'linux-legacy-public-update-proof.json') });
