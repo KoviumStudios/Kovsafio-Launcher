@@ -40,7 +40,11 @@ function readAsar(file, names) {
 async function publicJSON(url, max = 2000000) {
   const u = new URL(url);
   assert(u.protocol === 'https:' && ['api.github.com', 'github.com'].includes(u.hostname));
-  const response = await fetch(u, {headers:{Accept:'application/vnd.github+json','User-Agent':'Kovium-native-real-updater-regression'},signal:AbortSignal.timeout(30000)});
+  const headers = {Accept:'application/vnd.github+json','User-Agent':'Kovium-native-real-updater-regression'};
+  // Shared hosted-runner IPs exhaust the anonymous API quota. Authenticate only
+  // this CI metadata lookup; the released app and all download URLs stay public.
+  if (process.env.GITHUB_ACTIONS === 'true' && process.env.GH_TOKEN && u.hostname === 'api.github.com' && u.pathname === '/repos/' + REPO + '/releases/tags/v2-1.8.0') headers.Authorization = 'Bearer ' + process.env.GH_TOKEN;
+  const response = await fetch(u, {headers,redirect:'error',signal:AbortSignal.timeout(30000)});
   assert(response.ok, 'Public metadata HTTP ' + response.status);
   const bytes = Buffer.from(await response.arrayBuffer());
   assert(bytes.length <= max);
