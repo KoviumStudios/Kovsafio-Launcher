@@ -3,7 +3,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const source=path.resolve(process.env.KOVIUM_TEST_SOURCE||path.join(__dirname,'player-v193'));
 const legacy=require(path.join(__dirname,'fixtures/runner-classic-v193.js')),continuous=require(path.join(source,'runner-continuous.js'));
-const hud=s=>Object.fromEntries(Object.entries(s).filter(([key])=>!['inputCount','replayable','star','starEnabled'].includes(key)));
+const hud=s=>Object.fromEntries(Object.entries(s).filter(([key])=>!['inputCount','replayable','star','starEnabled','floor','platformsEnabled'].includes(key)));
 function safeActions(model){const s=model.snapshot(),nearest=s.entities.filter(e=>!e.hit&&!['coin','magnet','shield'].includes(e.kind)&&e.z>-.65).sort((a,b)=>a.z-b.z)[0],actions=[];if(nearest&&nearest.z<16){let lane=s.lane;while(lane<nearest.free){actions.push('right');lane++;}while(lane>nearest.free){actions.push('left');lane--;}}return actions;}
 function replayChunk(model,chunk){let at=chunk.fromTick;assert.equal(model.snapshot().tick,at);for(const input of chunk.inputs){assert(input.tick>=at&&input.tick<chunk.toTick);if(input.tick>at)model.advanceTicks(input.tick-at);model.action(input.action);at=input.tick;}if(chunk.toTick>at)model.advanceTicks(chunk.toTick-at);}
 test('continuous transport preserves the exact legacy physics and legacy season source',()=>{

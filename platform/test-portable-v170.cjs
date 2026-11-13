@@ -33,3 +33,5 @@ test('an already-published ARM native prevents duplicate dependency conversion',
 
 process.env.KOVIUM_TEST_SOURCE=path.join(__dirname,"player-v170");
 require("./test-long-run-v193.cjs");
+
+require('./test-runner-rig-v196.cjs');

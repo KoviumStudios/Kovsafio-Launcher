@@ -1,0 +1,9 @@
+'use strict';
+// Execute only on native CI workers, never on the owner's Windows installation.
+const {test}=require('node:test'),assert=require('node:assert/strict'),path=require('node:path');
+const Rig=require(path.join(process.env.KOVIUM_TEST_SOURCE,'runner-rig.js'));
+const leg={c:[-2,6,0],d:[4,12,4],uv:[0,16],uo:[0,32],piv:[-2,12,0],sw:-1},arm={c:[-6,18,0],d:[4,12,4],uv:[40,16],uo:[40,32],piv:[-6,24,0],sw:1};
+test('run cadence stays bounded as the world speeds up and arms oppose legs',()=>{for(const speed of [14,20,30]){const pose=Rig.create({time:.05,height:0,floor:0,velocity:0,speed},0);assert(pose.phase<1);assert.equal(pose.jump,false);const pieces=pose.parts([leg,arm]);assert.equal(pieces.length,4);assert.equal(pieces[0].d[1],6);assert.equal(pieces[1].uv[1],22);const foot=pose.point(pieces[1],[-2,0,0]),hand=pose.point(pieces[3],[-6,12,0]);assert(foot[2]*hand[2]<=0,'contralateral swing');}});
+test('soles remain above the floor through a complete running cycle',()=>{for(let i=0;i<60;i++){const pose=Rig.create({time:i/60,height:0,floor:0,velocity:0,speed:30},0);for(const side of [-1,1]){const p={...leg,c:[side*2,6,0],piv:[side*2,12,0],sw:side},lower=pose.parts([p])[1];for(const z of [-2,2])assert(pose.point(lower,[side*2,0,z])[1]>-1e-8);}}});
+test('a raised roof is grounded; only relative jump height changes the airborne pose',()=>{assert.equal(Rig.create({time:1,height:2.3,floor:2.3,velocity:0,speed:20}).jump,false);assert.equal(Rig.create({time:1,height:2.8,floor:2.3,velocity:4,speed:20}).jump,true);});
+test('crouching lowers the head without stretching texture parts or burying the feet',()=>{const head={c:[0,28,0],d:[8,8,8]},standing=Rig.create({time:0,height:0,floor:0,velocity:0,speed:14},0),duck=Rig.create({time:0,height:0,floor:0,velocity:0,speed:14},1);assert(duck.point(head,[0,32,0])[1]<standing.point(head,[0,32,0])[1]*.8);assert.deepEqual(duck.parts([head])[0].d,[8,8,8]);});
