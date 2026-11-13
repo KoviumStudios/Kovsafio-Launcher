@@ -64,7 +64,7 @@ function qaEntry(){
  let db=fs.existsSync(fixture)?JSON.parse(fs.readFileSync(fixture)):null,ended=false,checkpointAttempts=0,accepted=0,idempotentAcks=0;assert.equal(process.versions.electron,'45.2.2');
  const persist=()=>fs.writeFileSync(fixture,JSON.stringify(db)),wallet=()=>({...db?.profile?.arcade||{coins:0,totalRuns:0,revision:0}}),pub=()=>({ok:true,connected:true,profile:db.profile,providers:{password:true,google:false,discord:false},googleConfigured:true,expiresAt:Date.now()+86400000});
  const board=()=>{const entries=[{accountId:'mac-qa',name:'MacTraveler',score:2400,distance:350,coins:32,at:1},{accountId:'linux-qa',name:'LinuxPilot',score:1900,distance:290,coins:24,at:2},{accountId:'win-qa',name:'WinRunner',score:700,distance:120,coins:8,at:3},...(db?.best?[db.best]:[])].sort((a,b)=>b.score-a.score).map((p,i)=>({...p,rank:i+1}));return{ok:true,online:true,rankedReady:true,continuous:true,protocolVersion:3,protocol:'continuous-v1',mode:'arcade',season:cfg.descriptor.season,modelVersion:cfg.descriptor.modelVersion,physicsVersion:cfg.descriptor.physicsVersion,seasonDescriptor:cfg.descriptor,entries,personalBest:entries.find(p=>p.accountId===db?.profile?.id)||null,wallet:wallet()};};
- const lease=()=>({...board(),runId:db.runner.runId,ticket:db.runner.ticket,seed:db.runner.seed,expiresAt:Date.now()+35*60000,nextSequence:db.runner.nextSequence,state:db.runner.state});
+ const lease=()=>({...board(),runId:db.runner.runId,ticket:db.runner.ticket,seed:db.runner.seed,expiresAt:Date.now()+35*60000,nextSequence:db.runner.nextSequence,acceptedThroughTick:db.runner.state.tick,completed:db.runner.state.ended,state:db.runner.state.ended?null:db.runner.state,lastReceipt:db.runner.nextSequence?db.runner.receipts[db.runner.nextSequence-1].result.lastReceipt:null});
  function finish(ok,error){if(ended)return;ended=true;Object.assign(result,{ok,error,errors,calls,checkpointAttempts,accepted,idempotentAcks,wallet:wallet()});fs.writeFileSync(path.join(qa,'phase-'+phase+'.json'),JSON.stringify(result,null,2));app.exit(ok?0:1);}
  app.setPath('userData',path.join(qa,'profile'));app.setPath('appData',path.join(qa,'roaming'));app.disableHardwareAcceleration();
  const catalog=fs.readFileSync(cfg.catalog,'utf8'),oldFeed=fs.readFileSync(cfg.oldFeed,'utf8');
@@ -95,13 +95,16 @@ function qaEntry(){
     model.advanceTicks(body.toTick-cursor);const state=model.snapshot();assert.equal(state.tick,body.toTick,'Server replay must reach the claimed absolute tick');
     const acceptedCoins=state.coins-before.coins;assert(acceptedCoins>=0);db.profile.arcade.coins+=acceptedCoins;db.profile.arcade.revision++;if(state.ended&&!before.ended)db.profile.arcade.totalRuns++;
     if(!db.best||state.score>db.best.score)db.best={accountId:db.profile.id,name:db.profile.name,score:state.score,distance:Math.floor(state.distance),coins:state.coins,at:Date.now()};
-    db.runner.state=model.exportState();db.runner.nextSequence++;accepted++;data={...board(),ok:true,runId:db.runner.runId,sequence:body.sequence,acceptedThroughTick:body.toTick,completed:state.ended,state:db.runner.state,acceptedCoins,idempotent:false,lastReceipt:{sequence:body.sequence,hash:requestHash}};
+    db.runner.state=model.exportState();db.runner.nextSequence++;accepted++;
+    const {entries,seasonDescriptor,...leanBoard}=board();data={...leanBoard,ok:true,runId:db.runner.runId,sequence:body.sequence,seed:db.runner.seed,expiresAt:Date.now()+35*60000,nextSequence:db.runner.nextSequence,acceptedThroughTick:body.toTick,completed:state.ended,acceptedCoins,idempotent:false,lastReceipt:{sequence:body.sequence,hash:requestHash,toTick:body.toTick}};
+    assert(!Object.hasOwn(data,'state')&&!Object.hasOwn(data,'seasonDescriptor')&&!Object.hasOwn(data,'entries'),'Checkpoint replies must exercise the real lean ACK shape');
     db.runner.receipts[body.sequence]={hash:requestHash,result:data};persist();
     if(checkpointAttempts===1&&phase===1){status=503;data={error:'QA response lost after durable checkpoint commit'};}
    }
   }else if(route==='/v1/runner/start'||route==='/v1/runner/submit'){throw Error('The continuous native client must not use legacy bounded runner routes');
   }else if(route.endsWith('/version_manifest_v2.json'))data={latest:{release:'1.20.1',snapshot:'1.20.1'},versions:[{id:'1.20.1',type:'release',url:'https://piston-meta.mojang.com/qa.json',time:'2023-06-12T00:00:00Z',releaseTime:'2023-06-12T00:00:00Z'}]};
   else{status=503;data={error:'QA: external network blocked'};}
+  if(status===200&&(route==='/v2/runner/start'||route==='/v2/runner/resume'||route==='/v2/runner/checkpoint')){assert(Number.isSafeInteger(data.nextSequence)&&data.nextSequence>=0);assert(Number.isSafeInteger(data.acceptedThroughTick)&&data.acceptedThroughTick>=0);assert.equal(typeof data.completed,'boolean');assert(data.wallet&&Number.isSafeInteger(data.wallet.revision));if(data.lastReceipt)assert(Number.isSafeInteger(data.lastReceipt.toTick));}
   call.status=status;return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
  };
  shell.openExternal=async()=>{throw Error('No external OAuth is used in isolated QA');};
@@ -152,7 +155,7 @@ function qaEntry(){
     const guestWallet=wallet(),guestStart=calls.filter(c=>c.path==='/v2/runner/start').length,guestCheckpoints=calls.filter(c=>c.path==='/v2/runner/checkpoint').length;await run('koviumLauncher.setView("home");koviumLoading.update({state:"downloading",percent:25,text:"QA waiting"},{id:"qa-guest",name:"Minecraft"});document.getElementById("loading-game-open").click();void 0');await until(()=>run('document.getElementById("loading-game-pause").textContent==="Pausar"'),'guest waiting game');await run('window.__qaFrames.flush(1200);void 0');await wait(100);assert.equal(calls.filter(c=>c.path==='/v2/runner/start').length,guestStart);assert.equal(calls.filter(c=>c.path==='/v2/runner/checkpoint').length,guestCheckpoints);assert.deepEqual(wallet(),guestWallet);result.steps.push('guest-waiting-game-needs-no-login-or-ranked-service');
    }
    assert(fs.existsSync(path.join(qa,'profile/updates-v2/healthy-1.9.3')));assert.equal(errors.length,0);finish(true);
-  }catch(error){finish(false,error.stack||error.message);}});
+  }catch(error){try{result.failureUI=await win.webContents.executeJavaScript('(()=>({pauseLabel:document.getElementById("loading-game-pause")?.textContent,saveStatus:document.getElementById("run-kovi-save-status")?.textContent,accountConnected:window.koviumAccountUI?.snapshot?.connected,view:document.getElementById("view-arcade")?.hidden}))()');fs.writeFileSync(path.join(qa,'failed-ui.png'),(await win.webContents.capturePage()).toPNG());}catch{}finish(false,error.stack||error.message);}});
  });
  process.on('uncaughtException',error=>finish(false,error.stack));process.on('unhandledRejection',error=>finish(false,error?.stack||String(error)));app.setAppPath(archive);require(path.join(archive,'main.js'));setTimeout(()=>finish(false,'QA timeout'),210000).unref();
 }
