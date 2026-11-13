@@ -37,7 +37,7 @@ class Parents(unittest.TestCase):
                         if deb:
                             for name in ['opt','opt/kovium-launcher','opt/kovium-launcher/resources','usr','usr/share','usr/share/applications']:self.assertIn(name,names)
                             self.assertEqual(t.extractfile('usr/share/applications/kovium-launcher.desktop').read().splitlines()[0],b'[Desktop Entry]')
-                        else:self.assertEqual(names[0],'KOVIUM Launcher')
+                        else:self.assertEqual(names[0],'kovium-launcher')
     def test_rejects_parent_traversal(self):
         with tarfile.open(fileobj=io.BytesIO(),mode='w') as t:
             with self.assertRaises(ValueError):builder.tar_add_directory(t,'../outside')
