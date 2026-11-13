@@ -1,44 +1,268 @@
 'use strict';
-// CI-only compatibility test. The released signed .app is never modified.
-// Its exact legacy JS updater is dependency-injected outside the bundle, then
-// its real executable/entry point activates and restarts the new signed overlay.
-const fs=(()=>{try{return require('original-fs');}catch{return require('node:fs');}})(),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{spawn,execFileSync}=require('node:child_process');
-const REPO='KoviumStudios/Kovsafio-Launcher',LEGACY='1.8.0',LEGACY_ASAR='4be25e34085f4e870debb0b64a0ee5ff75bd3bc0d2d5c6268f0e4fc0b725a3c6';
-const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),fileHash=f=>sha(fs.readFileSync(f)),sleep=ms=>new Promise(r=>setTimeout(r,ms));
-function readAsar(file,names){const fd=fs.openSync(file,'r');try{const p=Buffer.alloc(16);if(fs.readSync(fd,p,0,16,0)!==16)throw Error('Incomplete ASAR');const size=p.readUInt32LE(12);if(size<2||size>10000000)throw Error('Invalid ASAR header');const h=Buffer.alloc(size);if(fs.readSync(fd,h,0,size,16)!==size)throw Error('Incomplete ASAR header');const tree=JSON.parse(h).files,base=8+p.readUInt32LE(4),out={};for(const name of names){const e=tree[name];if(!e||e.files||e.link||e.unpacked||!/^[0-9]+$/.test(e.offset)||!Number.isSafeInteger(e.size)||e.size<1||base+Number(e.offset)+e.size>fs.fstatSync(fd).size)throw Error('Invalid entry '+name);const b=Buffer.alloc(e.size);if(fs.readSync(fd,b,0,b.length,base+Number(e.offset))!==b.length)throw Error('Incomplete entry');out[name]=b;}return out;}finally{fs.closeSync(fd);}}
-function writeModules(dir,entries){fs.mkdirSync(dir,{recursive:true});for(const [name,b]of Object.entries(entries))fs.writeFileSync(path.join(dir,name),b);}
-async function json(url,max=2000000){const u=new URL(url);if(u.protocol!=='https:'||!['api.github.com','github.com'].includes(u.hostname))throw Error('Unexpected public metadata host');const r=await fetch(u,{headers:{Accept:'application/vnd.github+json','User-Agent':'Kovium-legacy-overlay-test'},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('Public release metadata HTTP '+r.status);const b=Buffer.from(await r.arrayBuffer());if(b.length>max)throw Error('Public metadata too large');return{bytes:b,value:JSON.parse(b)};}
-async function asset(a,file){if(!a||!/^sha256:[a-f0-9]{64}$/.test(a.digest||'')||!Number.isSafeInteger(a.size)||a.size<1||a.size>600000000)throw Error('Asset lacks trusted size/digest');const u=new URL(a.browser_download_url);if(u.protocol!=='https:'||u.hostname!=='github.com'||!u.pathname.startsWith('/'+REPO+'/releases/download/v2-1.8.0/'))throw Error('Unexpected legacy asset URL');const r=await fetch(u,{signal:AbortSignal.timeout(600000)});if(!r.ok||!r.body||new URL(r.url).protocol!=='https:')throw Error('Legacy asset HTTP '+r.status);const h=crypto.createHash('sha256'),fd=fs.openSync(file,'wx');let size=0;try{for await(const chunk of r.body){size+=chunk.length;if(size>a.size)throw Error('Oversized legacy asset');h.update(chunk);let p=0;while(p<chunk.length)p+=fs.writeSync(fd,chunk,p,chunk.length-p);}}finally{fs.closeSync(fd);}if(size!==a.size||'sha256:'+h.digest('hex')!==a.digest)throw Error('Legacy asset digest mismatch');}
-function workerStage(){
- const job=JSON.parse(fs.readFileSync(process.argv[3])),{EventEmitter}=require('node:events'),{Readable}=require('node:stream');
- const app=new EventEmitter();app.isPackaged=true;app.getVersion=()=>LEGACY;app.getPath=name=>name==='userData'?job.profile:name==='exe'?job.executable:undefined;app.quit=()=>setTimeout(()=>process.exit(0),200);
- if(process.versions.electron!=='45.2.2')throw Error('Legacy Electron runtime changed');if(process.resourcesPath!==job.resources)Object.defineProperty(process,'resourcesPath',{value:job.resources,configurable:true});
- const {createUpdater}=require(path.join(job.legacySource,'update-service.js')),config=require(path.join(job.legacySource,'launcher-config.js')),metadata=JSON.parse(fs.readFileSync(job.metadata));
- const updater=createUpdater({app,config,isBusy:()=>false,platform:'darwin',send:()=>{},fetchImpl:async url=>{if(url===config.UPDATE_URL)return new Response(JSON.stringify(metadata));if(url===metadata.url)return new Response(Readable.toWeb(fs.createReadStream(job.asar)));throw Error('Unexpected legacy updater request');}});
- (async()=>{const checked=await updater.check(false);if(checked.state!=='downloaded')throw Error('Legacy updater did not accept new signed release: '+checked.text);const applied=await updater.install();if(applied?.ok!==true)throw Error('Legacy updater did not stage its external supervisor');const helper=path.join(job.profile,'updates-v2/portable-update-helper.cjs');if(fileHash(helper)!==fileHash(path.join(job.legacySource,'portable-update.cjs')))throw Error('Legacy helper differs from released code');fs.writeFileSync(job.stageProof,JSON.stringify({ok:true,legacyUpdaterVersion:LEGACY,electron:process.versions.electron,arch:process.arch,helperSHA256:fileHash(helper),legacyUpdaterDependencyInjected:true,legacySignedBundleModified:false}));})().catch(e=>{console.error(e.stack);process.exit(1);});
+// CI-only regression: use the exact released Mac .app and its REAL updater/UI.
+// No app.isPackaged, resourcesPath, executable or application API is overridden.
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
+const assert = require('node:assert/strict');
+const {spawn, execFileSync} = require('node:child_process');
+const REPO = 'KoviumStudios/Kovsafio-Launcher';
+const LEGACY = '1.8.0';
+const LEGACY_ASAR = '4be25e34085f4e870debb0b64a0ee5ff75bd3bc0d2d5c6268f0e4fc0b725a3c6';
+const BLOCKED = 'La actualización se instala desde la versión instalada del launcher.';
+const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const fileHash = file => hash(fs.readFileSync(file));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function readAsar(file, names) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const prefix = Buffer.alloc(16);
+    assert.equal(fs.readSync(fd, prefix, 0, 16, 0), 16);
+    const length = prefix.readUInt32LE(12);
+    assert(length > 1 && length < 10000000);
+    const header = Buffer.alloc(length);
+    assert.equal(fs.readSync(fd, header, 0, length, 16), length);
+    const tree = JSON.parse(header).files, base = 8 + prefix.readUInt32LE(4), result = {};
+    for (const name of names) {
+      const item = tree[name];
+      assert(item && !item.files && !item.link && !item.unpacked && /^[0-9]+$/.test(item.offset));
+      assert(Number.isSafeInteger(item.size) && item.size > 0 && base + Number(item.offset) + item.size <= fs.fstatSync(fd).size);
+      const bytes = Buffer.alloc(item.size);
+      assert.equal(fs.readSync(fd, bytes, 0, bytes.length, base + Number(item.offset)), bytes.length);
+      result[name] = bytes;
+    }
+    return result;
+  } finally { fs.closeSync(fd); }
 }
-function workerFuture(){const job=JSON.parse(fs.readFileSync(process.argv[3])),m=JSON.parse(fs.readFileSync(job.metadata)),p=require(path.join(job.newSource,'portable-update.cjs')),dir=path.join(job.profile,'updates-v2');const prior=new Set(fs.readdirSync(dir));const app={getPath:name=>name==='userData'?job.profile:job.executable,getVersion:()=>m.version};const result=p.stagePortableUpdate({app,config:require(path.join(job.newSource,'launcher-config.js')),metadata:m,file:path.join(dir,'app-'+m.version+'.asar'),platform:'darwin',spawnImpl:()=>({pid:process.pid,on(){},unref(){}})});if(!result.ok)throw Error('Future helper dry stage failed');const helper=path.join(dir,'portable-update-helper.cjs'),retry=path.join(dir,'update-retry.cjs');if(fileHash(helper)!==fileHash(path.join(job.newSource,'portable-update.cjs'))||fileHash(retry)!==fileHash(path.join(job.newSource,'update-retry.cjs')))throw Error('Future helper dependency mismatch');require(helper);for(const name of fs.readdirSync(dir))if(!prior.has(name)&&/^portable-request-[a-f0-9]{32}\.json$/.test(name))fs.rmSync(path.join(dir,name));fs.writeFileSync(job.futureProof,JSON.stringify({ok:true,helperSHA256:fileHash(helper),retryDependencySHA256:fileHash(retry),newHelperLoadedUnderLegacyElectron:true,spawnWasInert:true,futureUpdateActuallyInstalled:false}));}
-async function main(){
- if(process.platform!=='darwin'||process.env.GITHUB_ACTIONS!=='true')throw Error('This test may run only on an ephemeral GitHub macOS runner.');
- const o={};for(let i=2;i<process.argv.length;i+=2)o[process.argv[i].replace(/^--/,'')]=process.argv[i+1];if(!o.asar||!o.metadata||!o.out)throw Error('--asar --metadata --out required');
- const root=path.resolve(path.dirname(o.out));fs.mkdirSync(root,{recursive:true});const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'kovium-real-legacy-'));const profile=path.join(os.homedir(),'Library/Application Support/kovium-launcher');if(fs.existsSync(profile))throw Error('Legacy compatibility test requires a fresh CI profile; run it before native-platform-smoke.');
- const owner=crypto.randomBytes(24).toString('hex'),marker=path.join(profile,'.kovium-legacy-test-owner'),target='darwin-'+process.arch,release=(await json('https://api.github.com/repos/'+REPO+'/releases/tags/v2-1.8.0')).value;
- const receiptAsset=release.assets.find(a=>a.name==='native-package-verification-'+target+'.json');if(!receiptAsset)throw Error('Missing released legacy native receipt');const receiptFile=path.join(root,'legacy-receipt.json');await asset(receiptAsset,receiptFile);const receipt=JSON.parse(fs.readFileSync(receiptFile));if(receipt.version!==LEGACY||receipt.appSha256!==LEGACY_ASAR||!receipt.nativeVerified||!receipt.nativeOverlayVerified)throw Error('Legacy native receipt is not verified');
- const pack=receipt.files.find(f=>f.name.endsWith('.zip')),releasePack=pack&&release.assets.find(a=>a.name===pack.name);if(!pack||releasePack?.digest!=='sha256:'+pack.sha256||releasePack.size!==pack.size)throw Error('Legacy package differs from verified receipt');const zip=path.join(scratch,'legacy-package.zip');await asset(releasePack,zip);const unpack=path.join(scratch,'legacy-distribution');fs.mkdirSync(unpack);execFileSync('/usr/bin/ditto',['-x','-k',zip,unpack]);const bundles=fs.readdirSync(unpack).filter(n=>n.endsWith('.app'));if(bundles.length!==1)throw Error('Expected one released app');const bundle=path.join(unpack,bundles[0]),resources=path.join(bundle,'Contents/Resources'),oldAsar=path.join(resources,'app.asar'),executable=path.join(bundle,'Contents/MacOS/Electron');if(fileHash(oldAsar)!==LEGACY_ASAR)throw Error('Legacy ASAR is not the known release');execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);
- const legacySource=path.join(scratch,'legacy-source'),newSource=path.join(scratch,'new-source');writeModules(legacySource,readAsar(oldAsar,['package.json','launcher-config.js','portable-update.cjs','update-service.js']));writeModules(newSource,readAsar(path.resolve(o.asar),['package.json','launcher-config.js','portable-update.cjs','update-retry.cjs']));
- const config=require(path.join(newSource,'launcher-config.js')),portableNew=require(path.join(newSource,'portable-update.cjs')),metadata=portableNew.verifyPortableMetadata(JSON.parse(fs.readFileSync(o.metadata)),config.UPDATE_PUBLIC_KEY,45);if(!portableNew.newer(LEGACY,metadata.version)||fileHash(o.asar)!==metadata.sha256)throw Error('New payload differs from signed metadata');
- fs.mkdirSync(profile,{recursive:true});fs.writeFileSync(marker,owner,{flag:'wx'});const stageProof=path.join(root,'legacy-stage-proof.json'),futureProof=path.join(root,'future-helper-proof.json'),job=path.join(scratch,'legacy-worker-job.json');fs.writeFileSync(job,JSON.stringify({profile,resources,executable,legacySource,newSource,asar:path.resolve(o.asar),metadata:path.resolve(o.metadata),stageProof,futureProof}));const env={...process.env};delete env.NODE_OPTIONS;delete env.ELECTRON_RUN_AS_NODE;let gui;
- const ownedSession=()=>{try{const s=JSON.parse(fs.readFileSync(path.join(profile,'updates-v2/launcher-session.json'))),expected=fs.realpathSync(executable),actual=typeof s.exe==='string'?fs.realpathSync(s.exe):null,a=actual&&fs.statSync(actual),b=fs.statSync(expected);if(Number.isInteger(s.pid)&&s.pid>0&&actual===expected&&a.isFile()&&b.isFile()&&a.dev===b.dev&&a.ino===b.ino)return {...s,canonicalExe:actual,expectedCanonicalExe:expected};}catch{}return null;};
- const stopSession=async()=>{const s=ownedSession();if(s){try{process.kill(s.pid,'SIGTERM');}catch{}for(let i=0;i<60;i++){try{process.kill(s.pid,0);await sleep(100);}catch{break;}}}};
- try{
-  execFileSync(executable,[__filename,'--legacy-stage-worker',job],{env:{...env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe'],timeout:90000});
-  const updates=path.join(profile,'updates-v2'),health=path.join(updates,'healthy-'+metadata.version),last=path.join(updates,'last-result.txt'),failed=path.join(updates,'failed-update.json');const deadline=Date.now()+240000;while(Date.now()<deadline){if(fs.existsSync(failed))throw Error('Legacy update rolled back');if(fs.existsSync(health)&&fs.existsSync(last)&&fs.readFileSync(last,'utf8').includes(metadata.version))break;await sleep(250);}if(!fs.existsSync(health)||!fs.existsSync(last))throw Error('Released legacy executable did not acknowledge the overlay');const active=JSON.parse(fs.readFileSync(path.join(updates,'portable-active.json')));if(active.metadata.sha256!==metadata.sha256||fileHash(active.file)!==metadata.sha256)throw Error('Active overlay mismatch');
-  const identityDeadline=Date.now()+10000;while(!ownedSession()&&Date.now()<identityDeadline)await sleep(100);const initialSession=ownedSession();let observed;try{const v=JSON.parse(fs.readFileSync(path.join(updates,'launcher-session.json')));observed={pid:v.pid,exe:v.exe};}catch{}const sessionIdentity={expectedExe:executable,expectedCanonicalExe:fs.realpathSync(executable),observed,canonicalMatch:!!initialSession,matchedBy:'canonical-path-and-device-inode'};fs.writeFileSync(path.join(root,'session-identity-proof.json'),JSON.stringify(sessionIdentity,null,2));if(!initialSession)throw Error('Cannot identify the real updated GUI session; see session-identity-proof.json');await stopSession();fs.rmSync(health,{force:true});fs.rmSync(path.join(profile,'DevToolsActivePort'),{force:true});const log=fs.openSync(path.join(root,'legacy-ui.log'),'a');gui=spawn(executable,['--remote-debugging-address=127.0.0.1','--remote-debugging-port=0'],{env,stdio:['ignore',log,log]});let guiError;gui.once('error',e=>{guiError=e;try{fs.closeSync(log);}catch{}});gui.once('exit',()=>{try{fs.closeSync(log);}catch{}});const restartDeadline=Date.now()+180000;while(!fs.existsSync(health)&&Date.now()<restartDeadline&&!guiError)await sleep(250);if(guiError)throw guiError;if(!fs.existsSync(health))throw Error('Legacy bundle did not reopen the persisted overlay');const ui=await require('./native-arcade-smoke-v180.cjs').inspectExisting({profile,output:root,timeoutMs:20000});
-  execFileSync(executable,[__filename,'--future-helper-worker',job],{env:{...env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe'],timeout:30000});execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);if(fileHash(oldAsar)!==LEGACY_ASAR)throw Error('Released bundle changed');
-  fs.writeFileSync(o.out,JSON.stringify({ok:true,platform:process.platform,arch:process.arch,legacyVersion:LEGACY,legacyNativePackageSHA256:pack.sha256,legacyASARSHA256:LEGACY_ASAR,updatedVersion:metadata.version,sourcePayloadSHA256:metadata.sha256,legacyUpdater:JSON.parse(fs.readFileSync(stageProof)),futureHelperStaging:JSON.parse(fs.readFileSync(futureProof)),releasedBundleUnchanged:true,macCodeSignaturePreserved:true,rendererReady:true,persistedOverlayReopened:true,sessionIdentity,uiProof:ui,target,updatedApplicationNativeVerified:true},null,2));console.log('KOVIUM_REAL_LEGACY_OVERLAY_OK');
- }finally{
-  gui?.kill();await stopSession();if(fs.existsSync(marker)&&fs.readFileSync(marker,'utf8')===owner&&path.resolve(profile)===path.join(path.resolve(os.homedir()),'Library/Application Support/kovium-launcher')&&!fs.lstatSync(profile).isSymbolicLink())fs.rmSync(profile,{recursive:true,force:true});if(path.dirname(path.resolve(scratch))===path.resolve(os.tmpdir())&&path.basename(scratch).startsWith('kovium-real-legacy-'))fs.rmSync(scratch,{recursive:true,force:true});
- }
+
+async function publicJSON(url, max = 2000000) {
+  const u = new URL(url);
+  assert(u.protocol === 'https:' && ['api.github.com', 'github.com'].includes(u.hostname));
+  const response = await fetch(u, {headers:{Accept:'application/vnd.github+json','User-Agent':'Kovium-native-real-updater-regression'},signal:AbortSignal.timeout(30000)});
+  assert(response.ok, 'Public metadata HTTP ' + response.status);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  assert(bytes.length <= max);
+  return JSON.parse(bytes);
 }
-if(process.argv[2]==='--legacy-stage-worker')workerStage();else if(process.argv[2]==='--future-helper-worker')workerFuture();else if(require.main===module)main().catch(e=>{console.error(e.stack||e.message);process.exitCode=1;});
-module.exports={readAsar};
+
+async function downloadLegacyAsset(asset, file) {
+  assert(asset && /^sha256:[a-f0-9]{64}$/.test(asset.digest || '') && Number.isSafeInteger(asset.size) && asset.size > 0 && asset.size < 600000000);
+  const url = new URL(asset.browser_download_url);
+  assert(url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith('/' + REPO + '/releases/download/v2-1.8.0/'));
+  const response = await fetch(url, {signal:AbortSignal.timeout(600000)});
+  assert(response.ok && response.body && new URL(response.url).protocol === 'https:');
+  const fd = fs.openSync(file, 'wx'), digest = crypto.createHash('sha256');
+  let bytes = 0;
+  try {
+    for await (const chunk of response.body) {
+      bytes += chunk.length;
+      assert(bytes <= asset.size);
+      digest.update(chunk);
+      for (let offset = 0; offset < chunk.length;) offset += fs.writeSync(fd, chunk, offset, chunk.length - offset);
+    }
+  } finally { fs.closeSync(fd); }
+  assert.equal(bytes, asset.size);
+  assert.equal('sha256:' + digest.digest('hex'), asset.digest);
+}
+
+function cleanEnv() {
+  const env = {...process.env};
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ELECTRON_FORCE_IS_PACKAGED;
+  delete env.NODE_OPTIONS;
+  return env;
+}
+
+async function connectUI(profile, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs, portFile = path.join(profile, 'DevToolsActivePort');
+  let target;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(portFile)) {
+      const port = Number(fs.readFileSync(portFile, 'utf8').split(/\r?\n/)[0]);
+      if (Number.isInteger(port) && port > 0 && port < 65536) {
+        try {
+          const pages = await (await fetch('http://127.0.0.1:' + port + '/json/list', {signal:AbortSignal.timeout(1500)})).json();
+          target = pages.find(page => page.type === 'page' && /^file:/.test(page.url) && /\/index\.html(?:[?#]|$)/.test(page.url));
+          if (target?.webSocketDebuggerUrl) break;
+        } catch {}
+      }
+    }
+    await sleep(150);
+  }
+  assert(target?.webSocketDebuggerUrl, 'The real released GUI did not expose its local page');
+  const endpoint = new URL(target.webSocketDebuggerUrl);
+  assert(endpoint.protocol === 'ws:' && ['127.0.0.1','localhost','[::1]'].includes(endpoint.hostname));
+  const socket = new WebSocket(endpoint), pending = new Map();
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error('Local GUI socket did not open')), 10000);
+    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once:true});
+    socket.addEventListener('error', () => { clearTimeout(timer); reject(Error('Local GUI socket failed')); }, {once:true});
+  });
+  let next = 0;
+  socket.addEventListener('message', event => {
+    let message;
+    try { message = JSON.parse(String(event.data)); } catch { return; }
+    const call = pending.get(message.id);
+    if (!call) return;
+    pending.delete(message.id); clearTimeout(call.timer);
+    message.error ? call.reject(Error(message.error.message)) : call.resolve(message.result);
+  });
+  const send = (method, params = {}, timeout = 180000) => new Promise((resolve, reject) => {
+    const id = ++next, timer = setTimeout(() => { pending.delete(id); reject(Error('GUI call timed out: ' + method)); }, timeout);
+    pending.set(id, {resolve,reject,timer}); socket.send(JSON.stringify({id,method,params}));
+  });
+  const evaluate = async expression => {
+    const result = await send('Runtime.evaluate', {expression,awaitPromise:true,returnByValue:true});
+    if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+    return result.result?.value;
+  };
+  await send('Runtime.enable'); await send('Page.enable'); await send('Page.bringToFront');
+  while (!await evaluate('Boolean(window.kovium&&window.koviumLauncher&&document.getElementById("update-install"))')) {
+    assert(Date.now() < deadline, 'The real released frontend did not initialize'); await sleep(100);
+  }
+  return {
+    evaluate,
+    screenshot:async file => fs.writeFileSync(file, Buffer.from((await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64')),
+    close:() => { for (const call of pending.values()) { clearTimeout(call.timer); call.reject(Error('GUI probe closed')); } pending.clear(); if (socket.readyState < 2) socket.close(); }
+  };
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGTERM');
+  for (let i = 0; i < 80 && child.exitCode === null && child.signalCode === null; i++) await sleep(100);
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+}
+
+async function main() {
+  assert(process.platform === 'darwin' && process.env.GITHUB_ACTIONS === 'true', 'Run only on an ephemeral GitHub macOS runner');
+  const options = {};
+  for (let i = 2; i < process.argv.length; i += 2) options[process.argv[i].replace(/^--/,'')] = process.argv[i + 1];
+  assert(options.asar && options.metadata && options.out, '--asar --metadata --out required');
+  const repairCommand = path.resolve(options.command || path.join(__dirname, 'Reparar actualizaciones Kovium.command'));
+  assert(fs.statSync(repairCommand).isFile(), 'The actual public repair command must accompany this test');
+  const root = path.resolve(path.dirname(options.out)); fs.mkdirSync(root, {recursive:true});
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'kovium-real-updater-'));
+  const profile = path.join(os.homedir(), 'Library/Application Support/kovium-launcher');
+  assert(!fs.existsSync(profile), 'Real legacy GUI test requires a fresh CI profile');
+  const marker = path.join(profile, '.kovium-native-legacy-owner'), owner = crypto.randomBytes(24).toString('hex');
+  const release = await publicJSON('https://api.github.com/repos/' + REPO + '/releases/tags/v2-1.8.0'), target = 'darwin-' + process.arch;
+  const receiptFile = path.join(scratch, 'receipt.json');
+  await downloadLegacyAsset(release.assets.find(asset => asset.name === 'native-package-verification-' + target + '.json'), receiptFile);
+  const receipt = JSON.parse(fs.readFileSync(receiptFile));
+  assert(receipt.version === LEGACY && receipt.appSha256 === LEGACY_ASAR && receipt.nativeVerified && receipt.nativeOverlayVerified);
+  const packageEntry = receipt.files.find(file => file.name.endsWith('.zip')), packageAsset = release.assets.find(asset => asset.name === packageEntry?.name);
+  assert(packageAsset?.digest === 'sha256:' + packageEntry.sha256 && packageAsset.size === packageEntry.size);
+  const zip = path.join(scratch, 'legacy.zip'); await downloadLegacyAsset(packageAsset, zip);
+  const unpack = path.join(scratch, 'distribution'); fs.mkdirSync(unpack);
+  execFileSync('/usr/bin/ditto', ['-x','-k',zip,unpack]);
+  const bundles = fs.readdirSync(unpack).filter(name => name.endsWith('.app')); assert.equal(bundles.length, 1);
+  const bundle = path.join(unpack,bundles[0]), executable = path.join(bundle,'Contents/MacOS/Electron'), archive = path.join(bundle,'Contents/Resources/app.asar');
+  assert.equal(fileHash(archive), LEGACY_ASAR); execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);
+  const source = path.join(scratch,'legacy-source'); fs.mkdirSync(source);
+  for (const [name, bytes] of Object.entries(readAsar(archive,['launcher-config.js','portable-update.cjs']))) fs.writeFileSync(path.join(source,name),bytes);
+  const config = require(path.join(source,'launcher-config.js')), portable = require(path.join(source,'portable-update.cjs'));
+  const published = portable.verifyPortableMetadata(await publicJSON(config.UPDATE_URL, 50000), config.UPDATE_PUBLIC_KEY, 45);
+  const candidate = portable.verifyPortableMetadata(JSON.parse(fs.readFileSync(options.metadata)), config.UPDATE_PUBLIC_KEY, 45);
+  assert(portable.newer(LEGACY,published.version), 'The public channel has no newer recovery target');
+  assert.equal(fileHash(options.asar), candidate.sha256);
+  fs.mkdirSync(profile, {recursive:true}); fs.writeFileSync(marker, owner, {flag:'wx'});
+  const updates = path.join(profile,'updates-v2'), portFile = path.join(profile,'DevToolsActivePort');
+  let child, ui;
+  const logs = [];
+  const launch = phase => {
+    fs.rmSync(portFile,{force:true});
+    const fd = fs.openSync(path.join(root,phase+'.log'),'a'); logs.push(fd);
+    const processHandle = spawn(executable,['--remote-debugging-address=127.0.0.1','--remote-debugging-port=0'],{env:cleanEnv(),stdio:['ignore',fd,fd]});
+    processHandle.on('error', error => fs.writeFileSync(path.join(root,phase+'-spawn-error.txt'),error.stack || error.message));
+    return processHandle;
+  };
+  const ownedSession = () => {
+    try {
+      const session = JSON.parse(fs.readFileSync(path.join(updates,'launcher-session.json')));
+      if (!Number.isInteger(session.pid) || session.pid <= 0 || typeof session.exe !== 'string') return null;
+      const actual = fs.realpathSync(session.exe), expected = fs.realpathSync(executable), a = fs.statSync(actual), b = fs.statSync(expected);
+      if (actual === expected && a.isFile() && a.dev === b.dev && a.ino === b.ino) return session;
+    } catch {}
+    return null;
+  };
+  const stopSession = async () => {
+    const session = ownedSession();
+    if (!session) return;
+    try { process.kill(session.pid,'SIGTERM'); } catch { return; }
+    for (let i = 0; i < 80; i++) { try { process.kill(session.pid,0); } catch { return; } await sleep(100); }
+    try { process.kill(session.pid,'SIGKILL'); } catch {}
+  };
+  try {
+    child = launch('legacy-real-no-override');
+    ui = await connectUI(profile);
+    const initial = await ui.evaluate('kovium.appInfo()');
+    assert.equal(initial.version, LEGACY); assert.equal(initial.packaged, false);
+    await ui.evaluate('window.koviumLauncher.setView("settings")');
+    const check = await ui.evaluate('kovium.checkUpdates()');
+    assert.equal(check.state,'downloaded'); assert.equal(check.version,published.version);
+    await ui.evaluate('document.getElementById("update-install").click(); void 0');
+    let rawError = '';
+    const errorDeadline = Date.now() + 15000;
+    while (Date.now() < errorDeadline) {
+      rawError = await ui.evaluate('document.getElementById("update-status").textContent');
+      if (rawError.includes(BLOCKED)) break;
+      await sleep(100);
+    }
+    const normalizedError = rawError.replace(/^Error invoking remote method ['"]update:install['"]:\s*Error:\s*/, '');
+    assert.equal(normalizedError,BLOCKED, 'The exact user-reported blocker must be reproduced through the real UI');
+    await ui.screenshot(path.join(root,'legacy-v180-reported-error.png'));
+    fs.writeFileSync(path.join(root,'legacy-real-blocker.json'),JSON.stringify({realGUI:true,reportedPackaged:initial.packaged,rawUIError:rawError,normalizedError,errorExact:true,baseArchiveSHA256:fileHash(archive)},null,2));
+    ui.close(); ui = null; await stopChild(child); child = null;
+
+    // Invoke the exact public rescue command, not a simulated app or helper.
+    const commandOutput = execFileSync('/bin/bash',[repairCommand,'--app',bundle],{env:cleanEnv(),encoding:'utf8',timeout:30000});
+    assert(/KOVIUM_REPAIR_STARTED pid=[1-9][0-9]*/.test(commandOutput));
+    fs.writeFileSync(path.join(root,'repair-command-output.txt'),commandOutput);
+    const health = path.join(updates,'healthy-' + published.version), last = path.join(updates,'last-result.txt'), failed = path.join(updates,'failed-update.json');
+    const deadline = Date.now() + 240000;
+    while (Date.now() < deadline) {
+      assert(!fs.existsSync(failed), 'The real recovery flow rolled back');
+      if (fs.existsSync(health) && fs.existsSync(last) && fs.readFileSync(last,'utf8').includes(published.version)) break;
+      await sleep(250);
+    }
+    assert(fs.existsSync(health) && fs.existsSync(last) && fs.readFileSync(last,'utf8').includes(published.version), 'The repair command did not complete the real public update');
+    const active = JSON.parse(fs.readFileSync(path.join(updates,'portable-active.json')));
+    portable.verifyPortableMetadata(active.metadata,config.UPDATE_PUBLIC_KEY,45);
+    assert.equal(active.metadata.sha256,published.sha256); assert(portable.validArchive(active.file,published));
+    assert.equal(fileHash(archive),LEGACY_ASAR); execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);
+    assert(ownedSession(), 'The updated real GUI must identify the same sealed executable');
+    await stopSession();
+
+    // The rescue environment is not persisted. Reopen the same .app normally.
+    fs.rmSync(health,{force:true}); child = launch('recovery-normal-reopen'); ui = await connectUI(profile);
+    const reopened = await ui.evaluate('kovium.appInfo()');
+    assert.equal(reopened.version,published.version); assert.equal(reopened.packaged,false);
+    await ui.evaluate('window.koviumLauncher.setView("settings")');
+    await ui.screenshot(path.join(root,'legacy-recovered-normal-reopen.png'));
+    assert.equal(fileHash(archive),LEGACY_ASAR); execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);
+    const proof = {
+      ok:true,platform:process.platform,arch:process.arch,target,
+      legacyVersion:LEGACY,legacyASARSHA256:LEGACY_ASAR,legacyNativePackageSHA256:packageEntry.sha256,
+      reportedPackaged:false,errorExact:true,reportedError:BLOCKED,rawUIError:rawError,
+      realLegacyUpdaterThroughUI:true,legacyUpdaterDependencyInjected:false,resourcesPathOverridden:false,
+      recoveryVerified:true,repairCommandActuallyExecuted:true,repairCommandSHA256:fileHash(repairCommand),
+      updatedVersion:published.version,recoveredPublicVersion:published.version,sourcePayloadSHA256:published.sha256,
+      candidateVersion:candidate.version,candidateSHA256:candidate.sha256,candidateFullUpdateValidatedBySeparateNativeOverlayTest:true,
+      persistedOverlayReopened:true,normalReopenPackaged:false,rescueEnvironmentNotPersisted:true,
+      releasedBundleUnchanged:true,macCodeSignaturePreserved:true,rendererReady:true,
+      noRealAccountsOrCredentialsUsed:true,isolatedEphemeralCIProfile:true
+    };
+    fs.writeFileSync(options.out,JSON.stringify(proof,null,2)); console.log('KOVIUM_REAL_LEGACY_RECOVERY_OK');
+  } finally {
+    ui?.close(); await stopChild(child); await stopSession();
+    for (const fd of logs) { try { fs.closeSync(fd); } catch {} }
+    if (fs.existsSync(marker) && fs.readFileSync(marker,'utf8') === owner && path.resolve(profile) === path.join(path.resolve(os.homedir()),'Library/Application Support/kovium-launcher') && !fs.lstatSync(profile).isSymbolicLink()) fs.rmSync(profile,{recursive:true,force:true});
+    if (path.dirname(path.resolve(scratch)) === path.resolve(os.tmpdir()) && path.basename(scratch).startsWith('kovium-real-updater-')) fs.rmSync(scratch,{recursive:true,force:true});
+  }
+}
+
+if (require.main === module) main().catch(error => { console.error(error.stack || error.message); process.exitCode = 1; });
+module.exports = {readAsar};
