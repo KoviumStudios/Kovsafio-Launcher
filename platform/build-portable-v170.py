@@ -49,7 +49,7 @@ def unix_members(z,prefix):
         else: t.type=tarfile.REGTYPE;t.size=info.file_size
         yield info,t
 def linux_tar(z,target,asar,logo,version,deb=False):
-    prefix='opt/kovium-launcher' if deb else 'KOVIUM Launcher'
+    prefix='opt/kovium-launcher' if deb else 'kovium-launcher'
     with tarfile.open(target,'w:gz',format=tarfile.PAX_FORMAT,compresslevel=6) as t:
         tar_add_directory(t,prefix)
         for info,member in unix_members(z,prefix):
