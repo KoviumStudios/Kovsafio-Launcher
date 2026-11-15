@@ -106,6 +106,14 @@ jobs:
       - name: Verify Java extraction and signed update safety
         shell: bash
         run: node --test platform/test-portable-v170.cjs
+      - name: Verify Fabric and Java 21 artifacts on the native operating system
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a node platform/native-fabric-smoke-v1101.cjs "native-results/fabric-$KOVIUM_TARGET"
+          else
+            node platform/native-fabric-smoke-v1101.cjs "native-results/fabric-$KOVIUM_TARGET"
+          fi
       - name: Verify Debian and portable archive directory order
         shell: bash
         run: python3 platform/test-portable-tar-parents-v170.py
@@ -248,6 +256,13 @@ jobs:
           Move-Item -LiteralPath legacy/app.asar -Destination stage/legacy-app.asar
           node -e "const fs=require('fs'),c=require('crypto'),m=JSON.parse(fs.readFileSync('stage/release-info.json'));for(const [f,h]of [['stage/app.asar',m.sha256],['stage/legacy-app.asar','4be25e34085f4e870debb0b64a0ee5ff75bd3bc0d2d5c6268f0e4fc0b725a3c6']])if(c.createHash('sha256').update(fs.readFileSync(f)).digest('hex')!==h)throw Error('Payload integrity mismatch');if(m.runtimeMajor!==45)throw Error('Unexpected runtime')"
           if ($LASTEXITCODE -ne 0) { throw 'Application integrity check failed' }
+      - name: Download the private administrator candidate for isolated CI
+        shell: pwsh
+        run: |
+          gh release download admin-1.9.4 --repo "$env:GITHUB_REPOSITORY" --pattern ci-admin-app.asar --dir stage
+          if ($LASTEXITCODE -ne 0) { throw 'Private candidate download failed' }
+          node -e "const fs=require('fs'),c=require('crypto'),m=require('./platform/admin-ci-inputs-v193.json');if(c.createHash('sha256').update(fs.readFileSync('stage/ci-admin-app.asar')).digest('hex')!==m.sha256)throw Error('Private candidate integrity mismatch')"
+          if ($LASTEXITCODE -ne 0) { throw 'Private candidate integrity check failed' }
       - name: Download and verify the matching official Electron runtime
         shell: pwsh
         run: |
@@ -266,6 +281,12 @@ jobs:
         run: |
           node platform/native-windows-smoke-v190.cjs --asar stage/app.asar --metadata stage/launcher-v2.json --runtime runtime --legacy-asar stage/legacy-app.asar --season platform/fixtures/runner-season-v190.json --out native-results/win32-x64
           if ($LASTEXITCODE -ne 0) { throw 'Native Windows verification failed' }
+      - name: Verify the administrator Fabric selector and existing profile controls
+        shell: pwsh
+        run: |
+          node platform/native-admin-profiles-smoke-v193.cjs --asar stage/ci-admin-app.asar --runtime runtime --out native-results/win32-x64/admin-profiles
+          if ($LASTEXITCODE -ne 0) { throw 'Native administrator verification failed' }
+          node -e "const fs=require('fs'),p='native-results/win32-x64/windows-update-proof.json',v=JSON.parse(fs.readFileSync(p));v.administratorAppSha256=require('./platform/admin-ci-inputs-v193.json').sha256;fs.writeFileSync(p,JSON.stringify(v,null,2))"
       - name: Upload the Windows verification to the inactive draft
         shell: pwsh
         run: |
