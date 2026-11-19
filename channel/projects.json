@@ -23,38 +23,14 @@
         "version": "1.0.0",
         "sha256": ""
       }
-    },
-    "permadeath": {
-      "name": "Permadeath",
-      "description": "Adaptacion de Permadeath de parte de Kovium Studios",
-      "type": "Fabric",
-      "mods": "74 mods",
-      "minecraft": "1.21.1",
-      "forge": "",
-      "memory": "4G",
-      "image": "https://github.com/KoviumStudios/Kovsafio-Launcher/releases/download/pack-permadeath-80ab3447e61b6737/permadeath.png",
-      "access": {
-        "mode": "public"
-      },
-      "soon": false,
-      "pack": {
-        "url": "https://github.com/KoviumStudios/Kovsafio-Launcher/releases/download/pack-permadeath-80ab3447e61b6737/permadeath-1.21.1-fabric.zip",
-        "version": "20261115-210310",
-        "sha256": "80ab3447e61b673755dfa86ccde67b3b2b82b8d81a7afa086255a9694b3a405e",
-        "manifest": {
-          "url": "https://github.com/KoviumStudios/Kovsafio-Launcher/releases/download/packdelta-permadeath-20261115-210310-97bfb947ce/manifest-337ac84ec04d27931cd440f93cf334c0b1b2d207954317b0c002535c78623e0a.json",
-          "sha256": "337ac84ec04d27931cd440f93cf334c0b1b2d207954317b0c002535c78623e0a",
-          "size": 10757
-        }
-      }
     }
   },
   "integrations": {
     "MS_CLIENT_ID": "88bab4d1-eb5b-41ec-804d-0ae37d76353b",
     "ACCESS_API_URL": "https://cuentas-production-2013.up.railway.app"
   },
-  "revision": "fa368737fe070430aead1f1aa39e460ffdc3cb202df0667d279421f5bc6f2809",
-  "publishedAt": "2026-11-15T21:03:44.383Z",
-  "signedPayload": "eyJzY2hlbWFWZXJzaW9uIjoyLCJwcm9qZWN0cyI6eyJyZXRvLXJ1c3NpYSI6eyJuYW1lIjoiUmV0byBSdXNzaWEiLCJkZXNjcmlwdGlvbiI6IkVsIHJldG8gZGUgS292aXVtIFN0dWRpb3MuIE11eSBwcm9udG8uIiwidHlwZSI6IlN1cnZpdmFsIiwibWluZWNyYWZ0IjoiMS4yMC4xIiwiZm9yZ2UiOiI0Ny40LjI4IiwibWVtb3J5IjoiNkciLCJpbWFnZSI6InJldG9ydXNzaWEucG5nIiwiYWNjZXNzIjp7Im1vZGUiOiJkaXNjb3JkIiwiZ3VpbGRJZCI6IjE1NjM1OTYxNDY0NzgyODg4OTYiLCJyb2xlSWRzIjpbIjE1NjU4NTExODk0NDk1OTcxNzgiXSwic2VydmVyQWRtaXNzaW9uIjpmYWxzZX0sInNvb24iOnRydWUsInBhY2siOnsidXJsIjoiIiwidmVyc2lvbiI6IjEuMC4wIiwic2hhMjU2IjoiIn19LCJwZXJtYWRlYXRoIjp7Im5hbWUiOiJQZXJtYWRlYXRoIiwiZGVzY3JpcHRpb24iOiJBZGFwdGFjaW9uIGRlIFBlcm1hZGVhdGggZGUgcGFydGUgZGUgS292aXVtIFN0dWRpb3MiLCJ0eXBlIjoiRmFicmljIiwibW9kcyI6Ijc0IG1vZHMiLCJtaW5lY3JhZnQiOiIxLjIxLjEiLCJmb3JnZSI6IiIsIm1lbW9yeSI6IjRHIiwiaW1hZ2UiOiJodHRwczovL2dpdGh1Yi5jb20vS292aXVtU3R1ZGlvcy9Lb3ZzYWZpby1MYXVuY2hlci9yZWxlYXNlcy9kb3dubG9hZC9wYWNrLXBlcm1hZGVhdGgtODBhYjM0NDdlNjFiNjczNy9wZXJtYWRlYXRoLnBuZyIsImFjY2VzcyI6eyJtb2RlIjoicHVibGljIn0sInNvb24iOmZhbHNlLCJwYWNrIjp7InVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9Lb3ZpdW1TdHVkaW9zL0tvdnNhZmlvLUxhdW5jaGVyL3JlbGVhc2VzL2Rvd25sb2FkL3BhY2stcGVybWFkZWF0aC04MGFiMzQ0N2U2MWI2NzM3L3Blcm1hZGVhdGgtMS4yMS4xLWZhYnJpYy56aXAiLCJ2ZXJzaW9uIjoiMjAyNjExMTUtMjEwMzEwIiwic2hhMjU2IjoiODBhYjM0NDdlNjFiNjczNzU1ZGZhODZjY2RlNjdiM2IyYjgyYjhkODFhN2FmYTA4NjI1NWE5Njk0YjNhNDA1ZSIsIm1hbmlmZXN0Ijp7InVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9Lb3ZpdW1TdHVkaW9zL0tvdnNhZmlvLUxhdW5jaGVyL3JlbGVhc2VzL2Rvd25sb2FkL3BhY2tkZWx0YS1wZXJtYWRlYXRoLTIwMjYxMTE1LTIxMDMxMC05N2JmYjk0N2NlL21hbmlmZXN0LTMzN2FjODRlYzA0ZDI3OTMxY2Q0NDBmOTNjZjMzNGMwYjFiMmQyMDc5NTQzMTdiMGMwMDI1MzVjNzg2MjNlMGEuanNvbiIsInNoYTI1NiI6IjMzN2FjODRlYzA0ZDI3OTMxY2Q0NDBmOTNjZjMzNGMwYjFiMmQyMDc5NTQzMTdiMGMwMDI1MzVjNzg2MjNlMGEiLCJzaXplIjoxMDc1N319fX0sImludGVncmF0aW9ucyI6eyJNU19DTElFTlRfSUQiOiI4OGJhYjRkMS1lYjViLTQxZWMtODA0ZC0wYWUzN2Q3NjM1M2IiLCJBQ0NFU1NfQVBJX1VSTCI6Imh0dHBzOi8vY3VlbnRhcy1wcm9kdWN0aW9uLTIwMTMudXAucmFpbHdheS5hcHAifSwicmV2aXNpb24iOiJmYTM2ODczN2ZlMDcwNDMwYWVhZDFmMWFhMzllNDYwZmZkYzNjYjIwMmRmMDY2N2QyNzk0MjFmNWJjNmYyODA5IiwicHVibGlzaGVkQXQiOiIyMDI2LTExLTE1VDIxOjAzOjQ0LjM4M1oifQ==",
-  "signature": "AyNPNeMd6SG/T/bNOc5kPJ0HUHU7u6ce7n9LQbMkeLZ2E5e7o/TYEyPw6J6LF07R9RAuy2YX+QwwSZHAFaJu5tdDwCybfmQR8pXR+rq2r+h8ZSUB6q5DUTH/2Wav0i+UZ+o6EvjcIS0iHrbWfTOrcV+JaZJ3ufrn6hxMiHmTFmZiZKg0FqRqAMySE0IFxtBsQiHjzf0c/+ftqZQNF5yiA2Vg3o0rEqZWRoeLrd4zyeZ7zbo9z7nVaJ1V/pKuE9ploX/hJcvm9BwoGlyuFyzUN4IFbZiwYF5XSdJTM58e7eC2NFI4+U3prt7zwNrI2bGcZXpdWxT+cC+Oeeq5rptYmdQr/nz1mBWvOIzwXL/jS8GfeA9ry/PWzh9Mu4LFJcwDsn9UZ01t2f2/ODdBUHRnwSh8i5de96y5S2IUqljKioflt4NmgFUEV3MyDrvOKmP1ocyszOC5Hca0OS5FbrKaEcWg1v/66xvmqXvvMAWUuEwx/wXipBxVIz3sO27r3Bif"
+  "revision": "efd2761b8496513ebf8a594da468fc3aabdadff521b8be1d2bfa8b486dc723f1",
+  "publishedAt": "2026-11-19T13:36:50.503Z",
+  "signedPayload": "eyJzY2hlbWFWZXJzaW9uIjoyLCJwcm9qZWN0cyI6eyJyZXRvLXJ1c3NpYSI6eyJuYW1lIjoiUmV0byBSdXNzaWEiLCJkZXNjcmlwdGlvbiI6IkVsIHJldG8gZGUgS292aXVtIFN0dWRpb3MuIE11eSBwcm9udG8uIiwidHlwZSI6IlN1cnZpdmFsIiwibWluZWNyYWZ0IjoiMS4yMC4xIiwiZm9yZ2UiOiI0Ny40LjI4IiwibWVtb3J5IjoiNkciLCJpbWFnZSI6InJldG9ydXNzaWEucG5nIiwiYWNjZXNzIjp7Im1vZGUiOiJkaXNjb3JkIiwiZ3VpbGRJZCI6IjE1NjM1OTYxNDY0NzgyODg4OTYiLCJyb2xlSWRzIjpbIjE1NjU4NTExODk0NDk1OTcxNzgiXSwic2VydmVyQWRtaXNzaW9uIjpmYWxzZX0sInNvb24iOnRydWUsInBhY2siOnsidXJsIjoiIiwidmVyc2lvbiI6IjEuMC4wIiwic2hhMjU2IjoiIn19fSwiaW50ZWdyYXRpb25zIjp7Ik1TX0NMSUVOVF9JRCI6Ijg4YmFiNGQxLWViNWItNDFlYy04MDRkLTBhZTM3ZDc2MzUzYiIsIkFDQ0VTU19BUElfVVJMIjoiaHR0cHM6Ly9jdWVudGFzLXByb2R1Y3Rpb24tMjAxMy51cC5yYWlsd2F5LmFwcCJ9LCJyZXZpc2lvbiI6ImVmZDI3NjFiODQ5NjUxM2ViZjhhNTk0ZGE0NjhmYzNhYWJkYWRmZjUyMWI4YmUxZDJiZmE4YjQ4NmRjNzIzZjEiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMTEtMTlUMTM6MzY6NTAuNTAzWiJ9",
+  "signature": "IS2PNJKgTimvvu5pi74xzT/ehRzbfWqcUSa1y3nozHiCq0S47KXsUnLsLfv3GpcOaTUXjm2YZJRgC4UZJ095+XfFwoR4VsyaXL9BMs1S+CrWCnMbOU0KNOnEO7YB3K+lCDV+2CRhqStiUzkWfnPFcseCJmABzMUE6S8sfpqfLqaKcABsYniHbXKPgXk04fTwOvaJlVQfbN4q9EMa/BBGG4h1QuTjTOF9z5smvWNzRLdRk5Bx+VgOFt4GeiclEln0wmDTaUXeljmL03frGGWRwKtBpIXvPu9ZwKTGVExsV9Yc8zibuJhFm3t7LONfWigmIIcb4caovRsx7IvthvYf2M2fAjpDjRiP7PZ5py9l/1vYxz80HyrtiJyQ2XuyYRTQtNDm2HHq+LlX98oGfSqyXsc9UjaWGsiRPZYoBypg4y5tvnm8IzbxRuYBLip5kBRGh5NYaUOZwSodfcPH6iBEAPl62WF+8pf6J9NgH5b0b3xRzXm2YuBDB2B6j7Af/NNM"
 }
