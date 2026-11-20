@@ -37,3 +37,5 @@ require("./test-long-run-v193.cjs");
 require('./test-runner-rig-v196.cjs');
 
 require('./test-fabric-v1101.cjs');
+
+require('./test-personal-v1110.cjs');
