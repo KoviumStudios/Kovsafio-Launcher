@@ -1,6 +1,6 @@
 {
-  "tag": "admin-1.9.4",
+  "tag": "admin-1.9.5",
   "asset": "ci-admin-app.asar",
-  "sha256": "18b8dd5b7cec3e3471cde50a58d905a582e357bbc1f23495d47203f41558e1a7",
-  "size": 16113282
+  "sha256": "151dae313656876c8397b7ebc7b7e647ed4a8caa625f3e0dbef9ed6006f178a1",
+  "size": 16121828
 }

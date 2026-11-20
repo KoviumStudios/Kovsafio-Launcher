@@ -259,7 +259,7 @@ jobs:
       - name: Download the private administrator candidate for isolated CI
         shell: pwsh
         run: |
-          gh release download admin-1.9.4 --repo "$env:GITHUB_REPOSITORY" --pattern ci-admin-app.asar --dir stage
+          gh release download admin-1.9.5 --repo "$env:GITHUB_REPOSITORY" --pattern ci-admin-app.asar --dir stage
           if ($LASTEXITCODE -ne 0) { throw 'Private candidate download failed' }
           node -e "const fs=require('fs'),c=require('crypto'),m=require('./platform/admin-ci-inputs-v193.json');if(c.createHash('sha256').update(fs.readFileSync('stage/ci-admin-app.asar')).digest('hex')!==m.sha256)throw Error('Private candidate integrity mismatch')"
           if ($LASTEXITCODE -ne 0) { throw 'Private candidate integrity check failed' }
